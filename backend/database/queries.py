@@ -3,6 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
+from backend.models.inner import UserCollision
+
 CREATE_CHECK_CONFLICTS_FUNCTION_QUERY = """
 CREATE OR REPLACE FUNCTION check_conflict(a ANYELEMENT, b ANYELEMENT)
 RETURNS BOOLEAN AS $$
@@ -28,19 +30,23 @@ WITH input_data AS (
             unnest(CAST(:sex            AS boolean[]))     as is_man
     ),
     conflicts AS (
-        SELECT inp.doc_num
+        SELECT inp.doc_num as doc,
+               inp.last_name, inp.first_name, inp.second_name, inp.second_name1,
+               inp.birth_date, inp.is_man,
+               usr.last_name, usr.first_name, usr.second_name, usr.second_name1,
+               usr.birth_date, usr.is_man
         FROM input_data inp
-        JOIN users ON inp.doc_num = users.doc_num
-        WHERE check_conflict(inp.last_name, users.last_name)
-           OR check_conflict(inp.first_name, users.first_name)
-           OR check_conflict(inp.second_name, users.second_name)
-           OR check_conflict(inp.second_name1, users.second_name1)
-           OR check_conflict(inp.birth_date, users.birth_date)
-           OR check_conflict(inp.is_man, users.is_man)
+        JOIN users usr ON inp.doc_num = usr.doc_num
+        WHERE check_conflict(inp.last_name, usr.last_name)
+           OR check_conflict(inp.first_name, usr.first_name)
+           OR check_conflict(inp.second_name, usr.second_name)
+           OR check_conflict(inp.second_name1, usr.second_name1)
+           OR check_conflict(inp.birth_date, usr.birth_date)
+           OR check_conflict(inp.is_man, usr.is_man)
     ),
     upsert_data AS (
         SELECT * FROM input_data
-        WHERE doc_num NOT IN (SELECT doc_num FROM conflicts)
+        WHERE doc_num NOT IN (SELECT doc FROM conflicts)
     ),
     upsert_result AS (
         INSERT INTO users
@@ -54,7 +60,7 @@ WITH input_data AS (
             is_man       = COALESCE(EXCLUDED.is_man,       users.is_man)
         RETURNING 1
     )
-SELECT doc_num FROM conflicts
+SELECT * FROM conflicts
 """
 
 async def execute_async(session: AsyncSession, query, **kwargs):
@@ -72,7 +78,7 @@ async def update_users(
     second_abbrevs,
     births,
     sex
-) -> tuple:
+) -> list[UserCollision]:
     result = await execute_async(
         session,
         UPDATE_USERS_QUERY,
@@ -84,4 +90,6 @@ async def update_users(
         births=births,
         sex=sex
     )
-    return [res[0] for res in result.fetchall()]
+    result = result.fetchall()
+    print(result[:10])
+    return [UserCollision.from_tuple(res) for res in result]
